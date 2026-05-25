@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<body style="background:#222;color:#fff;font-family:sans-serif;text-align:center;">
+<h1>ホスト側</h1>
+<p>ID: <span id="roomId">1234</span></p>
+<p>状態: <span id="status">待機中</span></p>
+
+<script src="peerjs.min.js"></script>
+<script>
+let roomId = "1234";
+document.getElementById("roomId").textContent = roomId;
+
+let peer = new Peer(roomId);
+let conn;
+
+peer.on("open", () => {
+  document.getElementById("status").textContent = "ホスト起動完了";
+});
+
+peer.on("connection", c => {
+  conn = c;
+  document.getElementById("status").textContent = "ゲスト接続: " + conn.peer;
+
+  conn.on("data", data => {
+    console.log("ゲスト→ホスト:", data);
+  });
+
+  setInterval(()=>{
+    if(conn && conn.open){
+      conn.send({msg:"ホストからの同期", time:Date.now()});
+    }
+  },1000);
+});
+</script>
+</body>
+</html>
