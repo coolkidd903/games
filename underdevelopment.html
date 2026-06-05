@@ -1,55 +1,481 @@
+<script>
+alert("JS開始");
+</script>
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>UIテスト</title>
+<title>3D Online Arena - PeerJS ロビー</title>
 <style>
 body{
   margin:0;
-  background:#222;
+  overflow:hidden;
+  background:#000;
   color:#fff;
   font-family:sans-serif;
 }
 
-/* UI は z-index 9999 で最前面 */
-#ui{
+/* 左上チャット */
+#chatArea{
   position:fixed;
-  top:20px;
-  left:20px;
-  z-index:9999;
+  top:10px;
+  left:10px;
+  width:260px;
   background:#000a;
-  padding:20px;
+  padding:10px;
   border:1px solid #4ea3ff;
   border-radius:8px;
+  z-index:1000;
+}
+#chatLog{
+  height:150px;
+  overflow-y:auto;
+  background:#000;
+  border:1px solid #4ea3ff;
+  padding:5px;
+  white-space:pre-wrap;
+  font-size:13px;
+}
+#chatInput{
+  width:180px;
 }
 
-/* canvas は pointer-events:none で絶対にクリックを奪わない */
-#game{
+/* 右上 VC / 報告 / 役割 */
+#topRight{
+  position:fixed;
+  top:10px;
+  right:10px;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  z-index:1000;
+}
+#topRight button{
+  background:#222;
+  color:#fff;
+  border:1px solid #4ea3ff;
+  border-radius:6px;
+  padding:6px 10px;
+  cursor:pointer;
+}
+#roleLabel{
+  font-size:13px;
+  opacity:0.8;
+}
+
+/* 中央上 ルームID + ボタン */
+#roomInfo{
+  position:fixed;
+  top:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background:#000a;
+  padding:6px 12px;
+  border-radius:8px;
+  border:1px solid #4ea3ff;
+  font-size:13px;
+  z-index:1000;
+}
+#roomInfo button{
+  margin-left:4px;
+  background:#222;
+  color:#fff;
+  border:1px solid #4ea3ff;
+  border-radius:6px;
+  padding:4px 8px;
+  cursor:pointer;
+}
+
+/* 3Dゲーム画面 */
+#gameContainer{
   position:fixed;
   top:0;
   left:0;
   width:100vw;
   height:100vh;
-  background:#444;
+  z-index:1; /* UI より下 */
+}
+#gameContainer canvas{
+  width:100%;
+  height:100%;
+  display:block;
+  /* ここが超重要：クリックをキャンバスに食われないようにする */
   pointer-events:none;
-  z-index:1;
+}
+
+/* 下部UI */
+#bottomInfo{
+  position:fixed;
+  bottom:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background:#000a;
+  padding:6px 12px;
+  border-radius:8px;
+  border:1px solid #4ea3ff;
+  font-size:13px;
+  z-index:1000;
 }
 </style>
 </head>
 <body>
 
-<div id="ui">
-  <button id="btn1">ボタン1</button>
-  <button id="btn2">ボタン2</button>
-  <button id="btn3">ボタン3</button>
+<!-- チャット -->
+<div id="chatArea">
+  <h3 style="margin-top:0;">チャット</h3>
+  <pre id="chatLog"></pre>
+  <input id="chatInput" placeholder="メッセージ">
+  <button id="chatSendBtn">送信</button>
 </div>
 
-<div id="game"></div>
+<!-- 右上 VC / 報告 / 役割 -->
+<div id="topRight">
+  <button id="micToggle">🎤 VC</button>
+  <button id="reportBtn">⚠ 報告</button>
+  <span id="roleLabel">役割: 未接続</span>
+</div>
+
+<!-- 中央上 ルームID + ホスト/ゲスト + オフライン対戦 -->
+<div id="roomInfo">
+  ルームID: <span id="roomIdText"></span>
+  <button id="beHostBtn">ホストになる</button>
+  <button id="beGuestBtn">ゲスト参加</button>
+  <button id="offlineBtn">オフライン対戦</button>
+</div>
+
+<!-- 3Dゲーム -->
+<div id="gameContainer"></div>
+
+<div id="bottomInfo">
+  WASD: 移動 / Space: ジャンプ / マウス: 視点 / PeerJS 多人数ロビー
+</div>
+
+<!-- ライブラリ -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r152/three.min.js"></script>
 
 <script>
-document.getElementById("btn1").onclick = ()=>alert("ボタン1 OK");
-document.getElementById("btn2").onclick = ()=>alert("ボタン2 OK");
-document.getElementById("btn3").onclick = ()=>alert("ボタン3 OK");
+<script>
+alert("A: スクリプト開始");
+
+  // ここから元のコードが始まる
+
+/* ===== PeerJS 設定（先輩専用） ===== */
+const PEER_JS_HOST = "8000-m-s-kkb-ase1a2-35qsr2o87yvgf-a.asia-east1-2.prod.colab.dev";
+const PEER_JS_PORT = 443;
+const PEER_JS_PATH = "/peerjs";
+
+/* ===== 3D 基本セットアップ ===== */
+const container = document.getElementById("gameContainer");
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202040);
+
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  2000
+);
+camera.position.set(0, 10, 20);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(10,20,10);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404040));
+alert("B: Three.js 初期化完了");
+/* ===== マップ（最強の戦場っぽく） ===== */
+const ground = new THREE.Mesh(
+  new THREE.BoxGeometry(200,1,200),
+  new THREE.MeshStandardMaterial({ color:0x303030 })
+);
+ground.position.y = -0.5;
+scene.add(ground);
+
+function addPlateau(x,z,w,d,h,color){
+  const p = new THREE.Mesh(
+    new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshStandardMaterial({ color:color || 0x404040 })
+  );
+  p.position.set(x,h/2-0.5,z);
+  scene.add(p);
+}
+addPlateau(0,0,40,40,4,0x404040);
+addPlateau(50,30,30,30,6,0x505050);
+addPlateau(-60,-20,25,25,8,0x505050);
+addPlateau(30,-50,20,20,5,0x454545);
+
+function addBuilding(x,z){
+  const b = new THREE.Mesh(
+    new THREE.BoxGeometry(10,20,10),
+    new THREE.MeshStandardMaterial({ color:0x606060 })
+  );
+  b.position.set(x,10,-z);
+  scene.add(b);
+}
+addBuilding(20,20);
+addBuilding(-30,-10);
+addBuilding(40,-40);
+addBuilding(-50,50);
+
+/* ===== プレイヤー ===== */
+const players = {};
+const myId = Math.random().toString(36).slice(2);
+let myName = "Player_" + myId.slice(0,4);
+
+function createPlayer(id, color, name){
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(2,4,2),
+    new THREE.MeshStandardMaterial({ color:color || 0x4ea3ff })
+  );
+  mesh.position.set((Math.random()-0.5)*40, 2, (Math.random()-0.5)*40);
+  scene.add(mesh);
+  players[id] = { mesh, velY:0, name:name || ("Player_"+id.slice(0,4)) };
+}
+createPlayer(myId, 0x4ea3ff, myName);
+
+/* ===== 入力 ===== */
+const keys = {};
+window.addEventListener("keydown", e=>{ keys[e.key.toLowerCase()] = true; });
+window.addEventListener("keyup", e=>{ keys[e.key.toLowerCase()] = false; });
+
+let yaw = 0, pitch = -0.3;
+let isMouseDown = false, lastX = 0, lastY = 0;
+
+window.addEventListener("mousedown", e=>{
+  isMouseDown = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+window.addEventListener("mouseup", ()=>{ isMouseDown = false; });
+window.addEventListener("mousemove", e=>{
+  if(!isMouseDown) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  yaw   -= dx * 0.005;
+  pitch -= dy * 0.005;
+  pitch = Math.max(-1.2, Math.min(0.3, pitch));
+});
+
+/* ===== プレイヤー更新 ===== */
+const moveSpeed = 0.3;
+const jumpPower = 0.5;
+const gravity = 0.03;
+
+function updatePlayer(dt){
+  const me = players[myId];
+  if(!me) return;
+  const mesh = me.mesh;
+
+  const forward = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+  const right   = new THREE.Vector3().copy(forward).cross(new THREE.Vector3(0,1,0));
+
+  let move = new THREE.Vector3();
+  if(keys["w"]) move.add(forward);
+  if(keys["s"]) move.sub(forward);
+  if(keys["a"]) move.sub(right);
+  if(keys["d"]) move.add(right);
+
+  if(move.lengthSq() > 0){
+    move.normalize().multiplyScalar(moveSpeed);
+    mesh.position.add(move);
+  }
+
+  const onGround = mesh.position.y <= 2;
+  if(onGround){
+    mesh.position.y = 2;
+    me.velY = 0;
+    if(keys[" "]) me.velY = jumpPower;
+  }else{
+    me.velY -= gravity;
+  }
+  mesh.position.y += me.velY;
+
+  const camDist = 12, camHeight = 6;
+  const cx = mesh.position.x - Math.sin(yaw)*camDist;
+  const cz = mesh.position.z - Math.cos(yaw)*camDist;
+  const cy = mesh.position.y + camHeight;
+  camera.position.set(cx,cy,cz);
+  camera.lookAt(mesh.position.x, mesh.position.y+2, mesh.position.z);
+}
+
+/* ===== チャット ===== */
+const chatLog = document.getElementById("chatLog");
+const chatInput = document.getElementById("chatInput");
+const chatSendBtn = document.getElementById("chatSendBtn");
+
+function addChatLine(text){
+  const t = new Date().toLocaleTimeString();
+  chatLog.textContent += `[${t}] ${text}\n`;
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+function sendChat(){
+  const raw = chatInput.value.trim();
+  if(!raw) return;
+  chatInput.value = "";
+  addChatLine(myName + ": " + raw);
+  broadcastMessage({ type:"chat", from:myId, name:myName, text:raw });
+}
+chatSendBtn.onclick = sendChat;
+chatInput.addEventListener("keydown", e=>{ if(e.key==="Enter") sendChat(); });
+
+/* ===== PeerJS 多人数ロビー ===== */
+let peer = null;
+let isHost = false;
+let roomId = "arena001";
+document.getElementById("roomIdText").textContent = roomId;
+
+const roleLabel = document.getElementById("roleLabel");
+const beHostBtn = document.getElementById("beHostBtn");
+const beGuestBtn = document.getElementById("beGuestBtn");
+const offlineBtn = document.getElementById("offlineBtn");
+
+const hostConnections = [];
+let guestConn = null;
+
+function setupPeerHost(){
+  if(peer) return;
+  isHost = true;
+  roleLabel.textContent = "役割: ホスト";
+  addChatLine("[SYSTEM] あなたがホストです");
+
+  peer = new Peer(roomId, {
+    host: PEER_JS_HOST,
+    port: PEER_JS_PORT,
+    path: PEER_JS_PATH,
+    secure: true
+  });
+
+  peer.on("connection", conn=>{
+    hostConnections.push(conn);
+    addChatLine("[SYSTEM] ゲスト接続: " + conn.peer);
+    conn.on("data", data=>{ handleGuestToHost(conn,data); });
+  });
+}
+
+function setupPeerGuest(){
+  if(peer) return;
+  isHost = false;
+  roleLabel.textContent = "役割: ゲスト";
+  addChatLine("[SYSTEM] ホストに接続中…");
+
+  peer = new Peer(undefined, {
+    host: PEER_JS_HOST,
+    port: PEER_JS_PORT,
+    path: PEER_JS_PATH,
+    secure: true
+  });
+
+  peer.on("open", id=>{
+    guestConn = peer.connect(roomId);
+    guestConn.on("open", ()=>{
+      addChatLine("[SYSTEM] ホストに接続しました");
+      guestConn.send({ type:"join", id:myId, name:myName });
+    });
+    guestConn.on("data", data=>{ handleHostToGuest(data); });
+  });
+}
+
+function handleGuestToHost(conn, data){
+  if(data.type === "join"){
+    if(!players[data.id]) createPlayer(data.id, 0xff4e4e, data.name);
+    broadcastFromHost({ type:"spawn", id:data.id, name:data.name });
+  }else if(data.type === "state"){
+    if(!players[data.id]) createPlayer(data.id, 0xff4e4e, data.name);
+    players[data.id].mesh.position.set(data.x,data.y,data.z);
+    broadcastFromHost(data, conn);
+  }else if(data.type === "chat"){
+    addChatLine(data.name + ": " + data.text);
+    broadcastFromHost(data);
+  }
+}
+
+function handleHostToGuest(data){
+  if(data.type === "spawn"){
+    if(!players[data.id]) createPlayer(data.id, 0xff4e4e, data.name);
+  }else if(data.type === "state"){
+    if(data.id !== myId){
+      if(!players[data.id]) createPlayer(data.id, 0xff4e4e, data.name);
+      players[data.id].mesh.position.set(data.x,data.y,data.z);
+    }
+  }else if(data.type === "chat"){
+    addChatLine(data.name + ": " + data.text);
+  }
+}
+
+function broadcastFromHost(msg, except){
+  hostConnections.forEach(c=>{ if(c !== except && c.open) c.send(msg); });
+}
+function broadcastMessage(msg){
+  if(isHost){
+    handleGuestToHost(null,msg);
+  }else{
+    if(guestConn && guestConn.open) guestConn.send(msg);
+  }
+}
+
+setInterval(()=>{
+  const me = players[myId];
+  if(!me) return;
+  const m = me.mesh;
+  broadcastMessage({
+    type:"state",
+    id: myId,
+    name: myName,
+    x: m.position.x,
+    y: m.position.y,
+    z: m.position.z
+  });
+}, 100);
+
+beHostBtn.onclick = setupPeerHost;
+beGuestBtn.onclick = setupPeerGuest;
+offlineBtn.onclick = ()=>{
+  roleLabel.textContent = "役割: オフライン";
+  addChatLine("[SYSTEM] オフライン対戦モード");
+};
+
+/* ===== VC / 報告（ダミー） ===== */
+const micToggle = document.getElementById("micToggle");
+let micOn = false;
+micToggle.onclick = ()=>{
+  micOn = !micOn;
+  micToggle.textContent = micOn ? "🎤 VC(ON)" : "🎤 VC";
+  addChatLine("[SYSTEM] VC はまだダミー（あとで本物にできる）");
+};
+const reportBtn = document.getElementById("reportBtn");
+reportBtn.onclick = ()=>{
+  const target = prompt("報告したいプレイヤー名を入力してください");
+  if(!target) return;
+  const reason = prompt("理由を入力してください（例: チート、暴言など）");
+  if(!reason) return;
+  addChatLine(`[REPORT] ${target} を報告: ${reason}`);
+};
+alert("C: UI イベント登録完了");
+
+/* ===== メインループ ===== */
+let lastTime = performance.now();
+function loop(now){
+  const dt = (now - lastTime)/16.67;
+  lastTime = now;
+  updatePlayer(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ===== リサイズ ===== */
+window.addEventListener("resize", ()=>{
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
 </script>
 
 </body>
