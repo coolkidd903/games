@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>CHAOS PINBALL SIMULATOR</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body, html {
+      margin: 0; padding: 0; width: 100vw; height: 100vh;
+      background: #050508; color: #fff; font-family: 'Courier New', monospace, sans-serif;
+      overflow: hidden; display: flex; justify-content: center; align-items: center;
+    }
+    
+    #game-container {
+      position: relative; width: 100%; height: 100%; 
+      display: flex; justify-content: center; align-items: center;
+    }
+    
+    canvas {
+      background: #0d0d14; border-radius: 8px;
+      max-height: 98vh; max-width: 98vw;
+      box-shadow: 0 0 50px rgba(255, 120, 0, 0.15), inset 0 0 20px rgba(0,0,0,0.9);
+      border: 6px solid #1a1a24;
+    }
+
+    #game-container.playing canvas { cursor: none; }
+    
+    .overlay {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 380px; background: rgba(10, 10, 15, 0.95); display: flex;
+      flex-direction: column; justify-content: center; align-items: center;
+      text-align: center; z-index: 10; padding: 30px; border-radius: 12px;
+      border: 2px solid #f59e0b; box-shadow: 0 0 40px rgba(245, 158, 11, 0.3);
+    }
+    
+    h1 { color: #f59e0b; margin: 0 0 10px 0; font-size: 26px; text-shadow: 0 0 12px #f59e0b; letter-spacing: 2px; }
+    h2 { color: #22d3ee; margin: 0 0 15px 0; font-size: 20px; }
+    p.desc { font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.5; }
+    
+    button {
+      background: #f59e0b; color: #000; border: none; padding: 12px 20px;
+      margin: 8px 0; font-size: 16px; font-weight: bold; border-radius: 6px;
+      cursor: pointer; width: 100%; transition: 0.2s; letter-spacing: 1px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    button:hover { filter: brightness(1.2); transform: translateY(-2px); }
+    button:active { transform: translateY(0); }
+    button.alt { background: #3b82f6; color: #fff; }
+    button.danger { background: #ef4444; color: #fff; }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; transform: none; }
+    
+    .hidden { display: none !important; }
+    
+    .status-bar { font-size: 16px; color: #fbbf24; margin-bottom: 15px; font-weight: bold; }
+    .shop-item { border: 1px solid #333; padding: 10px; margin: 5px 0; border-radius: 6px; width: 100%; text-align: left; background: #12121a; }
+    .shop-item-title { font-weight: bold; color: #fff; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+    .shop-item-desc { font-size: 12px; color: #aaa; margin-top: 4px; line-height: 1.4; }
+    
+    .settings-row { display: flex; justify-content: space-between; width: 100%; margin: 10px 0; font-size: 14px; align-items: center; }
+    
+    .warning-text {
+      font-size: 11px; color: #ff4444; font-weight: bold; margin-top: 15px;
+      text-align: left; line-height: 1.5; padding: 10px; border: 1px solid #ff4444;
+      background: rgba(255, 0, 0, 0.1); border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="game" width="600" height="900"></canvas>
+
+  <div id="menu-screen" class="overlay">
+    <h1>VIRTUAL PINBALL</h1>
+    <div class="status-bar" id="menu-status">🪙 コイン: 0</div>
+    <button onclick="startGame()">🎰 GAME START</button>
+    <button onclick="openShop()" class="alt">🛒 ショップ</button>
+    <button onclick="openSettings()">⚙️ 設定 / データ管理</button>
+    <p class="desc" style="margin-top:20px;">[Space] 発射 / [A][D] または [←][→] フリッパー<br><span style="color:#ef4444;">[ESC] ゲーム中断 (詰み防止)</span></p>
+  </div>
+
+  <div id="shop-screen" class="overlay hidden">
+    <h2>SHOP</h2>
+    <div class="status-bar" id="shop-status">🪙 コイン: 0</div>
+    <div class="shop-item">
+      <div class="shop-item-title">
+        <span>🌀 カオス度 (Lv.<span id="chaos-lv-disp">0</span>)</span>
+        <button id="buy-chaos-btn" onclick="buyChaos()" style="width: auto; padding: 4px 10px; margin: 0; font-size: 14px;">購入</button>
+      </div>
+      <div class="shop-item-desc">ボールのスピードと反発力が異常に上がる。最大Lv10。</div>
+    </div>
+    
+    <div class="shop-item">
+      <div class="shop-item-title">
+        <span>🎾 ボール同時発射 (Lv.<span id="ball-lv-disp">0</span>)</span>
+        <button id="buy-ball-btn" onclick="buyBall()" style="width: auto; padding: 4px 10px; margin: 0; font-size: 14px;">購入</button>
+      </div>
+      <div class="shop-item-desc">スタート時に複数球を同時に発射する。最大5球同時(Lv.4)。</div>
+    </div>
+
+    <div class="shop-item">
+      <div class="shop-item-title">
+        <span>🎈 浮遊 (1回分)</span>
+        <button onclick="buyLevitation()" style="width: auto; padding: 4px 10px; margin: 0; font-size: 14px;">50 CR</button>
+      </div>
+      <div class="shop-item-desc">次回のプレイ時、開始から1分間だけボールが弱く宙に浮くようになる。所持数: <span id="levi-count-disp">0</span></div>
+    </div>
+    <button onclick="showMenu()" class="danger" style="margin-top: 15px;">戻る</button>
+  </div>
+
+  <div id="settings-screen" class="overlay hidden">
+    <h2>設定 / データ管理</h2>
+    <div class="settings-row">
+      <span>BGM (音楽) ※準備中</span>
+      <input type="checkbox" id="bgm-toggle" onchange="toggleAudio('bgm')" disabled>
+    </div>
+    <div class="settings-row">
+      <span>SE (効果音)</span>
+      <input type="checkbox" id="se-toggle" onchange="toggleAudio('se')">
+    </div>
+    <div style="margin-top: 20px; width: 100%; border-top: 1px solid #333; padding-top: 15px;">
+      <button onclick="exportData()" class="alt" style="font-size: 14px;">💾 バックアップをダウンロード</button>
+      <button onclick="document.getElementById('import-file').click()" class="alt" style="font-size: 14px;">📂 バックアップを復元</button>
+      <input type="file" id="import-file" class="hidden" accept=".json" onchange="importData(event)">
+    </div>
+    <div class="warning-text">
+      【遊ぶ人への忠告】<br>
+      データは暗号化されています。キャッシュを消すなどの行為をした場合、データが消えるおそれがあります。その場合、開発者は責任を取りません。必ずバックアップを保存するようにお願いします。
+    </div>
+    <button onclick="showMenu()" class="danger" style="margin-top: 15px;">戻る</button>
+  </div>
+
+  <div id="gameover-screen" class="overlay hidden">
+    <h1 style="color: #ef4444;">GAME OVER</h1>
+    <p id="final-score" style="font-size: 24px; color: #f59e0b; margin: 10px 0; font-weight:bold;">SCORE: 0</p>
+    <p id="earned-coins" style="font-size: 16px; color: #22d3ee; margin-bottom: 20px;">+0 コイン獲得！</p>
+    <button onclick="startGame()">もう一度プレイ</button>
+    <button onclick="showMenu()" class="danger">メニューへ戻る</button>
+  </div>
+</div>
+
+<script>
+  
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  let audioCtx;
+
+  function initAudio() {
+    if (!audioCtx) audioCtx = new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  function playSound(type) {
+    if (!gameData.seEnabled || !audioCtx) return;
+    initAudio();
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+
+    if (type === 'flipper') {
+      osc.type = 'square'; osc.frequency.setValueAtTime(120, now); osc.frequency.exponentialRampToValueAtTime(80, now + 0.1);
+      gainNode.gain.setValueAtTime(0.05, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'bumper') {
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+      gainNode.gain.setValueAtTime(0.1, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc.start(now); osc.stop(now + 0.15);
+    } else if (type === 'target') {
+      osc.type = 'sine'; osc.frequency.setValueAtTime(800, now);
+      gainNode.gain.setValueAtTime(0.1, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'plunger') {
+      osc.type = 'triangle'; osc.frequency.setValueAtTime(200, now); osc.frequency.linearRampToValueAtTime(800, now + 0.3);
+      gainNode.gain.setValueAtTime(0.1, now); gainNode.gain.linearRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now); osc.stop(now + 0.3);
+    } else if (type === 'rollover') {
+      osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.setValueAtTime(1600, now + 0.05);
+      gainNode.gain.setValueAtTime(0.05, now); gainNode.gain.linearRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'gameover') {
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(50, now + 0.5);
+      gainNode.gain.setValueAtTime(0.1, now); gainNode.gain.linearRampToValueAtTime(0.01, now + 0.5);
+      osc.start(now); osc.stop(now + 0.5);
+    } else if (type === 'ball_lost') {
+      osc.type = 'sine'; osc.frequency.setValueAtTime(200, now); osc.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+      gainNode.gain.setValueAtTime(0.1, now); gainNode.gain.linearRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now); osc.stop(now + 0.3);
+    }
+  }
+
+  window.addEventListener('click', initAudio, { once: true });
+  window.addEventListener('keydown', initAudio, { once: true });
+
+  
+  const DATA_KEY = 'chaos_pinball_data_v2';
+  
+  const SECRET_KEY = "ChaosPinball_SuperSecretKey_2026"; 
+
+  let gameData = { coins: 0, chaosLevel: 0, levitationCount: 0, bgmEnabled: false, seEnabled: true, ballLevel: 0 };
+
+  function encryptData(data) {
+    return CryptoJS.AES.encrypt(JSON.stringify(data), SECRET_KEY).toString();
+  }
+
+  function decryptData(ciphertext) {
+    try {
+      const bytes = CryptoJS.AES.decrypt(ciphertext, SECRET_KEY);
+      return JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveData() { 
+    localStorage.setItem(DATA_KEY, encryptData(gameData)); 
+    updateUI(); 
+  }
+
+  function loadData() {
+    const saved = localStorage.getItem(DATA_KEY);
+    
+    const oldSaved = localStorage.getItem('chaos_pinball_data');
+
+    if (saved) {
+      const decrypted = decryptData(saved);
+      if (decrypted) gameData = { ...gameData, ...decrypted };
+    } else if (oldSaved) {
+      
+      try { 
+        gameData = { ...gameData, ...JSON.parse(oldSaved) }; 
+        saveData(); 
+      } catch(e) {}
+    }
+
+    if (gameData.ballLevel === undefined) gameData.ballLevel = 0;
+    document.getElementById('bgm-toggle').checked = gameData.bgmEnabled;
+    document.getElementById('se-toggle').checked = gameData.seEnabled;
+    updateUI();
+  }
+
+  function exportData() {
+    
+    const exportData = { encrypted_save: encryptData(gameData) };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `pinball_backup_${new Date().toISOString().split('T')[0]}.json`; a.click();
+  }
+
+  function importData(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      try { 
+        const imported = JSON.parse(evt.target.result); 
+        
+        // 暗号化されたバックアップファイルの場合
+        if (imported.encrypted_save) {
+            const decrypted = decryptData(imported.encrypted_save);
+            if (decrypted) {
+                gameData = { ...gameData, ...decrypted }; 
+                saveData(); 
+                alert('暗号化データを復元しました！'); 
+            } else {
+                throw new Error("復号化失敗");
+            }
+        } 
+        // 昔の暗号化されていない直接のJSONを読み込んだ場合（互換性）
+        else if (imported.coins !== undefined) {
+            gameData = { ...gameData, ...imported }; 
+            saveData();
+            alert('旧形式のデータを復元し、暗号化して保存しました！'); 
+        } else {
+            throw new Error("無効なデータ");
+        }
+      } catch(err) { 
+        alert('ファイルが無効、またはデータが改ざんされています。'); 
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
+  }
+
+  function toggleAudio(type) {
+    if (type === 'bgm') gameData.bgmEnabled = document.getElementById('bgm-toggle').checked;
+    if (type === 'se') gameData.seEnabled = document.getElementById('se-toggle').checked;
+    saveData(); initAudio();
+  }
+
+  function updateUI() {
+    document.getElementById('menu-status').innerText = `🪙 コイン: ${gameData.coins}`;
+    document.getElementById('shop-status').innerText = `🪙 コイン: ${gameData.coins}`;
+    
+    document.getElementById('chaos-lv-disp').innerText = gameData.chaosLevel;
+    const chaosBtn = document.getElementById('buy-chaos-btn');
+    if (gameData.chaosLevel >= 10) { chaosBtn.innerText = "MAX"; chaosBtn.disabled = true; }
+    else { let cost = 10 * Math.pow(2, gameData.chaosLevel); chaosBtn.innerText = `${cost} CR`; chaosBtn.disabled = gameData.coins < cost; }
+
+    document.getElementById('ball-lv-disp').innerText = gameData.ballLevel;
+    const ballBtn = document.getElementById('buy-ball-btn');
+    if (gameData.ballLevel >= 4) { ballBtn.innerText = "MAX"; ballBtn.disabled = true; }
+    else { let cost = 10 * Math.pow(2, gameData.ballLevel); ballBtn.innerText = `${cost} CR`; ballBtn.disabled = gameData.coins < cost; }
+
+    document.getElementById('levi-count-disp').innerText = gameData.levitationCount;
+  }
+
+  function hideAll() { document.querySelectorAll('.overlay').forEach(el => el.classList.add('hidden')); }
+  function showMenu() { isPlaying = false; document.getElementById('game-container').classList.remove('playing'); hideAll(); updateUI(); document.getElementById('menu-screen').classList.remove('hidden'); }
+  function openShop() { hideAll(); updateUI(); document.getElementById('shop-screen').classList.remove('hidden'); }
+  function openSettings() { hideAll(); document.getElementById('settings-screen').classList.remove('hidden'); }
+
+  function buyChaos() {
+    if (gameData.chaosLevel >= 10) return;
+    let cost = 10 * Math.pow(2, gameData.chaosLevel);
+    if (gameData.coins >= cost) { gameData.coins -= cost; gameData.chaosLevel++; saveData(); playSound('rollover'); }
+  }
+
+  function buyBall() {
+    if (gameData.ballLevel >= 4) return;
+    let cost = 10 * Math.pow(2, gameData.ballLevel);
+    if (gameData.coins >= cost) { gameData.coins -= cost; gameData.ballLevel++; saveData(); playSound('rollover'); }
+  }
+
+  function buyLevitation() { if (gameData.coins >= 50) { gameData.coins -= 50; gameData.levitationCount++; saveData(); playSound('rollover'); } }
+
+  const canvas = document.getElementById('game'); const ctx = canvas.getContext('2d');
+  const W = canvas.width; const H = canvas.height;
+  let isPlaying = false, score = 0, plungerPower = 0; const keys = {};
+  
+  let balls = [];
+  let particles = [], walls = [], bumpers = [], dropTargets = [], slingshots = [], rollovers = [];
+  let currentChaosMult = 1.0, isLevitating = false, levitationEndTime = 0;
+  let plungerLaneClosed = false;
+
+  window.addEventListener('keydown', e => { 
+    if (e.code === 'Escape' && isPlaying) { gameOver(); return; }
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD'].includes(e.code)) e.preventDefault(); 
+    if (!keys[e.code] && (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'KeyA' || e.code === 'KeyD')) {
+        playSound('flipper'); 
+    }
+    keys[e.code] = true; 
+  });
+  window.addEventListener('keyup', e => { 
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD'].includes(e.code)) e.preventDefault(); 
+    keys[e.code] = false; 
+  });
+
+  function spawnParticles(x, y, color, count = 10, speed = 4) {
+    for (let i = 0; i < count; i++) {
+      let angle = Math.random() * Math.PI * 2; let s = Math.random() * speed + 1;
+      particles.push({ x: x, y: y, vx: Math.cos(angle) * s, vy: Math.sin(angle) * s, life: 1.0, color: color });
+    }
+  }
+
+  class Flipper {
+    constructor(x, y, length, baseAngle, activeAngle, isLeft) {
+      this.x = x; this.y = y; this.length = length; this.baseAngle = baseAngle; this.activeAngle = activeAngle;
+      this.angle = baseAngle; this.angularVelocity = 0; this.isLeft = isLeft;
+    }
+    update(isPressed) {
+      let target = isPressed ? this.activeAngle : this.baseAngle;
+      let diff = target - this.angle; this.angularVelocity = diff * 0.6; this.angle += this.angularVelocity;
+    }
+    getTip() { return { x: this.x + Math.cos(this.angle) * this.length, y: this.y + Math.sin(this.angle) * this.length }; }
+  }
+
+  const leftFlipper = new Flipper(180, 800, 95, 0.4, -0.45, true);
+  const rightFlipper = new Flipper(380, 800, 95, Math.PI - 0.4, Math.PI + 0.45, false);
+
+  function buildStage() {
+    walls = []; bumpers = []; dropTargets = []; slingshots = []; rollovers = [];
+    walls.push({ p1: {x: 520, y: 150}, p2: {x: 520, y: 900} }); walls.push({ p1: {x: 580, y: 150}, p2: {x: 580, y: 900} });
+    walls.push({ p1: {x: 580, y: 150}, p2: {x: 520, y: 60} }); walls.push({ p1: {x: 520, y: 60}, p2: {x: 400, y: 40} });
+    walls.push({ p1: {x: 400, y: 40}, p2: {x: 200, y: 40} }); walls.push({ p1: {x: 200, y: 40}, p2: {x: 70, y: 80} });
+    walls.push({ p1: {x: 70, y: 80}, p2: {x: 30, y: 180} }); walls.push({ p1: {x: 30, y: 180}, p2: {x: 30, y: 650} });
+    walls.push({ p1: {x: 30, y: 650}, p2: {x: 90, y: 900} }); walls.push({ p1: {x: 490, y: 650}, p2: {x: 430, y: 900} });
+    walls.push({ p1: {x: 100, y: 630}, p2: {x: 100, y: 700} }); walls.push({ p1: {x: 100, y: 700}, p2: {x: 160, y: 770} });
+    walls.push({ p1: {x: 460, y: 630}, p2: {x: 460, y: 700} }); walls.push({ p1: {x: 460, y: 700}, p2: {x: 400, y: 770} });
+
+    bumpers = [
+      { x: 180, y: 220, r: 35, color: '#ef4444', glow: '#ff0033', score: 1000 },
+      { x: 360, y: 220, r: 35, color: '#ef4444', glow: '#ff0033', score: 1000 },
+      { x: 270, y: 320, r: 40, color: '#3b82f6', glow: '#00d2ff', score: 1500 }
+    ];
+
+    slingshots = [ { p1: {x: 120, y: 630}, p2: {x: 170, y: 740} }, { p1: {x: 440, y: 630}, p2: {x: 390, y: 740} } ];
+    walls.push({ p1: {x: 120, y: 630}, p2: {x: 120, y: 730} }); walls.push({ p1: {x: 120, y: 730}, p2: {x: 170, y: 740} });
+    walls.push({ p1: {x: 440, y: 630}, p2: {x: 440, y: 730} }); walls.push({ p1: {x: 440, y: 730}, p2: {x: 390, y: 740} });
+
+    dropTargets.push({ x: 50, y: 400, w: 10, h: 40, active: true, color: '#eab308' });
+    dropTargets.push({ x: 50, y: 450, w: 10, h: 40, active: true, color: '#eab308' });
+    dropTargets.push({ x: 210, y: 450, w: 40, h: 10, active: true, color: '#22c55e' });
+    dropTargets.push({ x: 260, y: 450, w: 40, h: 10, active: true, color: '#22c55e' });
+    dropTargets.push({ x: 310, y: 450, w: 40, h: 10, active: true, color: '#22c55e' });
+
+    rollovers = [ { x: 170, y: 100, r: 15, active: false }, { x: 240, y: 80, r: 15, active: false }, { x: 310, y: 80, r: 15, active: false }, { x: 380, y: 100, r: 15, active: false } ];
+  }
+
+  function startGame() {
+    initAudio();
+    if (document.activeElement) document.activeElement.blur();
+    hideAll(); document.getElementById('game-container').classList.add('playing');
+    buildStage(); 
+    
+    balls = [];
+    let numBalls = 1 + (gameData.ballLevel || 0);
+    for (let i = 0; i < numBalls; i++) {
+        balls.push({ x: 550, y: 850 - (i * 26), vx: 0, vy: 0, radius: 12, launched: false });
+    }
+
+    score = 0; plungerPower = 0; particles = [];
+    currentChaosMult = 1.0 + (gameData.chaosLevel * 0.15);
+    isLevitating = false; plungerLaneClosed = false;
+
+    if (gameData.levitationCount > 0) { gameData.levitationCount--; saveData(); isLevitating = true; levitationEndTime = Date.now() + 60000; }
+    isPlaying = true;
+  }
+
+  function gameOver() {
+    playSound('gameover');
+    isPlaying = false; document.getElementById('game-container').classList.remove('playing');
+    let earnedCoins = Math.floor(score / 1000); gameData.coins += earnedCoins; saveData();
+    document.getElementById('final-score').innerText = `SCORE: ${score.toLocaleString()}`;
+    document.getElementById('earned-coins').innerText = `+${earnedCoins} コイン獲得！`;
+    setTimeout(() => { document.getElementById('gameover-screen').classList.remove('hidden'); }, 500);
+  }
+
+  function checkLineCollision(ball, p1, p2, bounceMultiplier = 0.6, extraVelocity = 0, effectColor = null) {
+    let dx = p2.x - p1.x; let dy = p2.y - p1.y; let lenSq = dx * dx + dy * dy; if (lenSq === 0) return;
+    let u = Math.max(0, Math.min(1, ((ball.x - p1.x) * dx + (ball.y - p1.y) * dy) / lenSq));
+    let projX = p1.x + u * dx; let projY = p1.y + u * dy;
+    let dist = Math.hypot(ball.x - projX, ball.y - projY);
+
+    if (dist < ball.radius) {
+      let nx = (ball.x - projX) / (dist || 1); let ny = (ball.y - projY) / (dist || 1);
+      ball.x = projX + nx * ball.radius; ball.y = projY + ny * ball.radius; 
+
+      let dot = ball.vx * nx + ball.vy * ny;
+      if (dot < 0) {
+        let finalBounce = bounceMultiplier * currentChaosMult;
+        ball.vx = (ball.vx - 2 * dot * nx) * finalBounce;
+        ball.vy = (ball.vy - 2 * dot * ny) * finalBounce;
+        if (Math.abs(extraVelocity) > 0.05) {
+          ball.vy -= Math.abs(extraVelocity) * (35 * currentChaosMult); ball.vx += nx * (10 * currentChaosMult);
+        } else if (extraVelocity > 0) {
+          ball.vx += nx * (extraVelocity * currentChaosMult); ball.vy += ny * (extraVelocity * currentChaosMult);
+        }
+        if (effectColor) spawnParticles(projX, projY, effectColor, 5 * currentChaosMult, 2 * currentChaosMult);
+      }
+    }
+  }
+
+  function update() {
+    if (!isPlaying) return;
+    leftFlipper.update(keys['ArrowLeft'] || keys['KeyA']); rightFlipper.update(keys['ArrowRight'] || keys['KeyD']);
+    let activeLevitation = (isLevitating && Date.now() < levitationEndTime);
+
+    let allLaunched = balls.every(b => b.launched);
+    if (!allLaunched) {
+      if (keys['Space']) plungerPower = Math.min(plungerPower + 0.5, 30);
+      else if (plungerPower > 0) { 
+        balls.forEach((b, index) => {
+            b.vy = -plungerPower - 10 - (index * 1.5);
+            b.vx = -1.0 + (Math.random() * 0.4 - 0.2); 
+            b.launched = true;
+            spawnParticles(b.x, b.y, '#f59e0b', 10, 5);
+        });
+        plungerPower = 0; 
+        playSound('plunger');
+      }
+    }
+
+    let currentGravity = activeLevitation ? -0.05 : 0.35;
+    let maxSpeed = 35 + (gameData.chaosLevel * 5);
+
+    if (allLaunched && !plungerLaneClosed) {
+        if (balls.every(b => b.y < 130)) plungerLaneClosed = true;
+    }
+
+    const physicsSteps = 4;
+    for (let step = 0; step < physicsSteps; step++) {
+      
+      balls.forEach(ball => {
+        if (!ball.launched) return;
+        ball.vy += currentGravity / physicsSteps;
+        let speed = Math.hypot(ball.vx, ball.vy);
+        if (speed > maxSpeed) { ball.vx = (ball.vx / speed) * maxSpeed; ball.vy = (ball.vy / speed) * maxSpeed; }
+        ball.x += ball.vx / physicsSteps;
+        ball.y += ball.vy / physicsSteps;
+      });
+
+      for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+          let b1 = balls[i]; let b2 = balls[j];
+          if (!b1.launched || !b2.launched) continue;
+          let dx = b2.x - b1.x; let dy = b2.y - b1.y;
+          let dist = Math.hypot(dx, dy) || 1;
+          let minDist = b1.radius + b2.radius;
+          
+          if (dist < minDist) {
+            let overlap = minDist - dist;
+            let nx = dx / dist; let ny = dy / dist;
+            b1.x -= nx * overlap * 0.5; b1.y -= ny * overlap * 0.5;
+            b2.x += nx * overlap * 0.5; b2.y += ny * overlap * 0.5;
+
+            let dvx = b1.vx - b2.vx; let dvy = b1.vy - b2.vy;
+            let dot = dvx * nx + dvy * ny;
+            
+            if (dot > 0) {
+              let bounce = 0.9;
+              let impulse = (1 + bounce) * dot / 2;
+              b1.vx -= impulse * nx; b1.vy -= impulse * ny;
+              b2.vx += impulse * nx; b2.vy += impulse * ny;
+            }
+          }
+        }
+      }
+
+      balls.forEach(ball => {
+        if (!ball.launched) return;
+        
+        walls.forEach(w => checkLineCollision(ball, w.p1, w.p2, 0.65));
+        
+        if (plungerLaneClosed) {
+            checkLineCollision(ball, {x: 520, y: 150}, {x: 580, y: 150}, 0.5, 0, '#22d3ee');
+            if (ball.x > 510 && ball.x < 590 && ball.y > 150 && ball.y < 180) {
+                ball.y = 150 - ball.radius; 
+                if (ball.vy > 0) ball.vy *= -0.5;
+            }
+        }
+
+        checkLineCollision(ball, {x: leftFlipper.x, y: leftFlipper.y}, leftFlipper.getTip(), 0.5, leftFlipper.angularVelocity);
+        checkLineCollision(ball, {x: rightFlipper.x, y: rightFlipper.y}, rightFlipper.getTip(), 0.5, rightFlipper.angularVelocity);
+        
+        let slingshotHit = false;
+        slingshots.forEach(s => {
+          let prevVx = ball.vx;
+          checkLineCollision(ball, s.p1, s.p2, 0.6, 15, '#ffaa00');
+          if (prevVx !== ball.vx) slingshotHit = true;
+        });
+        if (slingshotHit) playSound('bumper');
+
+        bumpers.forEach(b => {
+          let dx = ball.x - b.x, dy = ball.y - b.y; let dist = Math.hypot(dx, dy);
+          if (dist < ball.radius + b.r) {
+            let angle = Math.atan2(dy, dx);
+            ball.x = b.x + Math.cos(angle) * (ball.radius + b.r); ball.y = b.y + Math.sin(angle) * (ball.radius + b.r);
+            ball.vx = Math.cos(angle) * (15 * currentChaosMult); ball.vy = Math.sin(angle) * (15 * currentChaosMult);
+            score += Math.floor(b.score / physicsSteps); 
+            playSound('bumper');
+            spawnParticles(ball.x, ball.y, b.glow, 8 * currentChaosMult, 4 * currentChaosMult);
+          }
+        });
+
+        let allCleared = true;
+        let targetHit = false;
+        dropTargets.forEach(t => {
+          if (t.active) {
+            allCleared = false;
+            let closestX = Math.max(t.x, Math.min(ball.x, t.x + t.w)); let closestY = Math.max(t.y, Math.min(ball.y, t.y + t.h));
+            let dx = ball.x - closestX, dy = ball.y - closestY;
+            if ((dx * dx + dy * dy) < (ball.radius * ball.radius)) {
+              if (Math.abs(dx) > Math.abs(dy)) ball.vx *= -1 * currentChaosMult; else ball.vy *= -1 * currentChaosMult;
+              t.active = false; score += 2500; targetHit = true;
+              spawnParticles(t.x + t.w/2, t.y + t.h/2, t.color, 10, 4);
+            }
+          }
+        });
+        if (targetHit) playSound('target');
+        if (allCleared && dropTargets.length > 0) { score += 10000; dropTargets.forEach(t => t.active = true); playSound('rollover'); }
+        
+        if (activeLevitation && Math.random() < 0.05) spawnParticles(ball.x, ball.y + 5, '#a855f7', 1, 1);
+      });
+    }
+
+    balls.forEach(ball => {
+      rollovers.forEach(r => {
+        let dist = Math.hypot(ball.x - r.x, ball.y - r.y);
+        if (dist < r.r + ball.radius && !r.active) { 
+          r.active = true; score += 500; playSound('rollover');
+          spawnParticles(r.x, r.y, '#22d3ee', 5); 
+          setTimeout(() => { r.active = false; }, 2000); 
+        }
+      });
+    });
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      let p = particles[i]; p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    for (let i = balls.length - 1; i >= 0; i--) {
+        if (balls[i].y > H + 20) {
+            balls.splice(i, 1);
+            playSound('ball_lost');
+        }
+    }
+
+    if (isPlaying && balls.length === 0) {
+        gameOver();
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#0d0d14'; ctx.fillRect(0, 0, W, H);
+    let bgAlpha = Math.min(0.3, gameData.chaosLevel * 0.03); let grad = ctx.createRadialGradient(W/2, H/3, 50, W/2, H/2, W);
+    grad.addColorStop(0, `rgba(40, 40, 70, 0.4)`); grad.addColorStop(1, `rgba(255, 0, 0, ${bgAlpha})`); ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 24px "Courier New", monospace'; ctx.fillText(score.toLocaleString().padStart(9, '0'), 30, 40);
+    
+    ctx.fillStyle = '#22d3ee'; ctx.font = '16px sans-serif'; ctx.fillText(`🎾 ACTIVE BALLS: ${balls.length}`, 30, 70);
+
+    if (isLevitating) { let remain = Math.max(0, Math.ceil((levitationEndTime - Date.now()) / 1000)); ctx.fillStyle = '#a855f7'; ctx.font = '16px sans-serif'; ctx.fillText(`🎈 浮遊中: ${remain}s`, 30, 95); }
+
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+    walls.forEach(w => { ctx.beginPath(); ctx.moveTo(w.p1.x, w.p1.y); ctx.lineTo(w.p2.x, w.p2.y); ctx.stroke(); }); ctx.shadowBlur = 0;
+    
+    if (plungerLaneClosed) {
+      ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 4; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.moveTo(520, 150); ctx.lineTo(580, 150); ctx.stroke(); ctx.shadowBlur = 0;
+    }
+
+    rollovers.forEach(r => { ctx.fillStyle = r.active ? '#22d3ee' : '#334155'; ctx.shadowColor = r.active ? '#22d3ee' : 'transparent'; ctx.shadowBlur = r.active ? 15 : 0; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.fill(); }); ctx.shadowBlur = 0;
+    dropTargets.forEach(t => { if (t.active) { ctx.fillStyle = t.color; ctx.shadowColor = t.color; ctx.shadowBlur = 10; ctx.fillRect(t.x, t.y, t.w, t.h); } else { ctx.fillStyle = '#1e293b'; ctx.fillRect(t.x, t.y, t.w, t.h); } }); ctx.shadowBlur = 0;
+    bumpers.forEach(b => { ctx.fillStyle = b.color; ctx.shadowColor = b.glow; ctx.shadowBlur = 20; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.5, 0, Math.PI * 2); ctx.stroke(); }); ctx.shadowBlur = 0;
+    slingshots.forEach(s => { ctx.strokeStyle = '#ff0055'; ctx.lineWidth = 5; ctx.shadowColor = '#ff0055'; ctx.shadowBlur = 12; ctx.beginPath(); ctx.moveTo(s.p1.x, s.p1.y); ctx.lineTo(s.p2.x, s.p2.y); ctx.stroke(); }); ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#eab308'; ctx.lineWidth = 18; ctx.lineCap = 'round'; ctx.shadowColor = '#eab308'; ctx.shadowBlur = 8;
+    let lTip = leftFlipper.getTip(); ctx.beginPath(); ctx.moveTo(leftFlipper.x, leftFlipper.y); ctx.lineTo(lTip.x, lTip.y); ctx.stroke();
+    let rTip = rightFlipper.getTip(); ctx.beginPath(); ctx.moveTo(rightFlipper.x, rightFlipper.y); ctx.lineTo(rTip.x, rTip.y); ctx.stroke(); ctx.shadowBlur = 0;
+
+    if (balls.length > 0 && !balls[0].launched) { ctx.fillStyle = '#64748b'; ctx.fillRect(535, 880, 30, 20); ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(550, 880); ctx.lineTo(550, 880 + plungerPower * 2); ctx.stroke(); ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText('SPACE', 530, 840); }
+    particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1.0;
+    
+    if (isPlaying) { 
+        balls.forEach(ball => {
+            ctx.fillStyle = (isLevitating && Date.now() < levitationEndTime) ? '#e9d5ff' : '#cbd5e1'; 
+            ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill(); 
+            ctx.fillStyle = '#ffffff'; 
+            ctx.beginPath(); ctx.arc(ball.x - 3, ball.y - 3, ball.radius * 0.3, 0, Math.PI * 2); ctx.fill(); 
+        });
+    }
+  }
+
+  function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+  loadData(); showMenu(); requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
